@@ -67,6 +67,7 @@ public class MainActivity extends Activity {
     private boolean muted = true; // start silent; the choice is remembered
     private android.widget.ImageView speaker;
     private final AudioLevels levels = new AudioLevels();
+    private final Trace moves = new Trace();  // how much of the picture was moving, for the graph
     private WaveView wave;
     private boolean waveOn = true;        // sound level line; independent of the speaker
     private android.widget.ImageView waveButton;
@@ -289,7 +290,7 @@ public class MainActivity extends Activity {
         tunerLp.setMargins(0, (int) (8 * dp), 0, 0);
         controls.addView(tuner, tunerLp);
         root.addView(controls, pickerLp);
-        wave = new WaveView(this, levels);
+        wave = new WaveView(this, levels, moves);
         root.addView(wave, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, (int) (72 * dp), Gravity.BOTTOM));
         flash = new View(this); // not clickable: touches fall through to the controls and the video
@@ -419,6 +420,7 @@ public class MainActivity extends Activity {
         prevFrames = 0;
         prevTickAt = streamStartedAt;
         levels.clear();
+        moves.clear();
         motion.reset();
         audioLoaded = wantAudio();
 
@@ -602,7 +604,12 @@ public class MainActivity extends Activity {
         motionReadout.setAlpha(motionOn ? 1f : 0.35f);
         styleAlarm(soundChip, soundBar, soundOn);
         styleAlarm(motionChip, motionBar, motionOn);
-        wave.setLimit(tunerOpen && soundOn ? soundLimit() : -1f); // shown while adjusting
+        // Limit lines are shown while adjusting. The movement line is drawn whenever the picture is
+        // being analysed, i.e. for the highlight or for the movement alarm.
+        wave.setLimit(tunerOpen && soundOn ? soundLimit() : -1f);
+        wave.setMoveLimit(tunerOpen && motionOn ? moveLevel(motionLimit()) : -1f);
+        wave.setShown(waveOn, peaking || motionOn);
+        wave.setVisibility(waveOn || peaking || motionOn ? View.VISIBLE : View.GONE);
     }
 
     /** An alarm's label is its switch: a blue pill while on, like the buttons in the top row. */
@@ -613,6 +620,15 @@ public class MainActivity extends Activity {
         chip.setBackground(bg);
         chip.setTextColor(on ? Color.WHITE : 0xCCFFFFFF);
         bar.setAlpha(on ? 1f : 0.35f); // still adjustable while off
+    }
+
+    /**
+     * Where a share of the picture that is moving (percent) sits on the graph, 0..1. Logarithmic,
+     * 0.05% to 50%: a still room hovers near the bottom, and the alarm's whole range (0.25% to 25%)
+     * lies between a quarter and nine tenths of the height.
+     */
+    private static float moveLevel(float percent) {
+        return clamp((float) Math.log10(Math.max(percent, 0.05f) / 0.05f) / 3f, 0f, 1f);
     }
 
     private void flashAlarm() {
@@ -702,6 +718,7 @@ public class MainActivity extends Activity {
         float b = clamp(sh / 2f + (root.getHeight() / 2f - panY) / zoom, 0f, sh) / sh;
         motion.analyse(video, videoAspect, zoom, l, t, r, b);
         float moving = motion.moving();
+        if (moving >= 0f) moves.push(moveLevel(moving), android.os.SystemClock.uptimeMillis());
         if (motionOn && moving >= motionLimit()) flashAlarm();
     }
 
@@ -777,6 +794,7 @@ public class MainActivity extends Activity {
         // The address usually carries a password or a secret token: keep it out of keyboard learning.
         url.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI
                 | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        url.setImeOptions(android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
         if (old != null) {
             name.setText(old.name);
             url.setText(old.url);
@@ -906,7 +924,6 @@ public class MainActivity extends Activity {
         tuneButton.setBackground(tbg);
         tuner.setVisibility(tunerOpen ? View.VISIBLE : View.GONE);
         updateAlarms();
-        wave.setVisibility(waveOn ? View.VISIBLE : View.GONE);
     }
 
     private void updateBadge() {
@@ -1423,13 +1440,60 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** A short history of a 0..1 value with the time of each reading. UI thread only. */
+    private static final class Trace {
+        private static final int SIZE = 512; // 20 s on screen at ten readings a second, with room to spare
+        private final float[] level = new float[SIZE];
+        private final long[] at = new long[SIZE];
+        private int head, count;
+
+        void push(float value, long uptimeMillis) {
+            level[head] = value;
+            at[head] = uptimeMillis;
+            head = (head + 1) % SIZE;
+            if (count < SIZE) count++;
+        }
+
+        void clear() {
+            count = 0;
+        }
+
+        /** Copies the newest readings, newest first, into the arrays; returns how many. */
+        int snapshot(float[] outLevel, long[] outAt) {
+            int n = Math.min(count, outLevel.length);
+            for (int i = 0; i < n; i++) {
+                int j = (head - 1 - i + SIZE) % SIZE;
+                outLevel[i] = level[j];
+                outAt[i] = at[j];
+            }
+            return n;
+        }
+    }
+
     /** The sound level as a line scrolling right to left: flat and green when quiet, tall and red on a spike. */
     private static final class WaveView extends View {
         private static final float WINDOW_MS = 20_000f;          // time span across the screen
         private static final float WARM = 0.45f, HOT = 0.75f;    // level where the line turns yellow / red
         private static final int QUIET = 0xFF4CD964, MID = 0xFFFFCC00, LOUD = 0xFFFF3B30;
 
+        private static final int MOVE = 0xFF00E5FF;               // the movement line: cyan, like the highlight
+        private static final long MOVE_GAP_MS = 500;              // longer without a reading: leave a hole
         private final AudioLevels levels;
+        private final Trace moves;
+        private final float[] moveLevel = new float[Trace.SIZE];
+        private final long[] moveAt = new long[Trace.SIZE];
+        private final android.graphics.Paint moveMark = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private float moveLimit = -1f; // movement alarm level to mark, below 0 = none
+        private boolean showSound = true, showMoves;
+
+        void setMoveLimit(float level) {
+            moveLimit = level;
+        }
+
+        void setShown(boolean sound, boolean movement) {
+            showSound = sound;
+            showMoves = movement;
+        }
         private final float[] level = new float[AudioLevels.SIZE];
         private final long[] at = new long[AudioLevels.SIZE];
         private final android.graphics.Paint line = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
@@ -1442,9 +1506,10 @@ public class MainActivity extends Activity {
             limit = level;
         }
 
-        WaveView(android.content.Context ctx, AudioLevels levels) {
+        WaveView(android.content.Context ctx, AudioLevels levels, Trace moves) {
             super(ctx);
             this.levels = levels;
+            this.moves = moves;
             dp = getResources().getDisplayMetrics().density;
             line.setStyle(android.graphics.Paint.Style.STROKE);
             line.setStrokeCap(android.graphics.Paint.Cap.ROUND);
@@ -1453,6 +1518,10 @@ public class MainActivity extends Activity {
             mark.setStrokeWidth(1f * dp);
             mark.setColor(0xCCFF3B30);
             mark.setPathEffect(new android.graphics.DashPathEffect(new float[]{6f * dp, 4f * dp}, 0f));
+            moveMark.set(mark);
+            moveMark.setColor(0xCC00E5FF);
+            // Offset dashes, so the two limit lines stay distinguishable where they coincide.
+            moveMark.setPathEffect(new android.graphics.DashPathEffect(new float[]{6f * dp, 4f * dp}, 5f * dp));
             shade.setStyle(android.graphics.Paint.Style.STROKE);
             shade.setStrokeCap(android.graphics.Paint.Cap.ROUND);
             shade.setStrokeWidth(2.5f * dp);
@@ -1466,8 +1535,31 @@ public class MainActivity extends Activity {
             float w = getWidth(), pad = 8f * dp;
             float base = getHeight() - pad, span = getHeight() - 2f * pad;
             float pxPerMs = w / WINDOW_MS;
-            if (limit >= 0f) canvas.drawLine(0f, base - limit * span, w, base - limit * span, mark);
-            for (int pass = 0; pass < 2; pass++) {
+            if (showMoves) {
+                if (moveLimit >= 0f) {
+                    canvas.drawLine(0f, base - moveLimit * span, w, base - moveLimit * span, moveMark);
+                }
+                // The movement line goes underneath: sound spikes are the briefer of the two.
+                int m = moves.snapshot(moveLevel, moveAt);
+                for (int pass = 0; pass < 2; pass++) {
+                    for (int i = 0; i + 1 < m; i++) {
+                        if (moveAt[i] - moveAt[i + 1] > MOVE_GAP_MS) continue;
+                        float x1 = w - (now - moveAt[i]) * pxPerMs, x0 = w - (now - moveAt[i + 1]) * pxPerMs;
+                        if (x1 < 0) break;
+                        float y1 = base - moveLevel[i] * span, y0 = base - moveLevel[i + 1] * span;
+                        if (pass == 0) {
+                            shade.setStrokeWidth(3f * dp);
+                            canvas.drawLine(x0, y0, x1, y1, shade);
+                        } else {
+                            line.setColor(MOVE);
+                            line.setStrokeWidth(1.5f * dp);
+                            canvas.drawLine(x0, y0, x1, y1, line);
+                        }
+                    }
+                }
+            }
+            if (showSound && limit >= 0f) canvas.drawLine(0f, base - limit * span, w, base - limit * span, mark);
+            for (int pass = 0; showSound && pass < 2; pass++) {
                 for (int i = 0; i + 1 < n; i++) {
                     if (at[i] - at[i + 1] > 4 * AudioLevels.SLICE_MS) continue; // gap in the audio: leave a hole
                     float x1 = w - (now - at[i]) * pxPerMs, x0 = w - (now - at[i + 1]) * pxPerMs;

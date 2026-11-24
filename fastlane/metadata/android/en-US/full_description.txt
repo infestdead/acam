@@ -4,6 +4,8 @@ A live viewer for your own RTSP camera, built for watching a sleeping baby.
 
 <b>Sound line</b> — a scrolling line of the sound level, measured against the room's own background noise. Works with the speaker muted.
 
+<b>Movement line</b> — a second line on the same graph shows how much of the picture is moving, so you can set the alarm level against it.
+
 <b>Visual alarms</b> — the screen pulses red when sound or movement passes a level you set. Each alarm has its own switch and sensitivity.
 
 <b>Liveness</b> — a clock that only advances while frames are actually arriving, and a red badge the moment they stop.

@@ -12,8 +12,11 @@ picture really live?*
 - **Sound line.** A scrolling line of the sound level, measured against the room's own
   background noise, so a quiet night and a noisy afternoon both read as "flat until something
   happens". Works with the speaker muted.
+- **Movement line.** A second line on the same graph shows how much of the picture is
+  moving, so you can see a stir build up and set the alarm level against it.
 - **Visual alarms.** The screen pulses red when sound or movement passes a level you set.
-  Each alarm has its own switch and its own sensitivity.
+  Each alarm has its own switch and its own sensitivity, and its limit is drawn on the graph
+  while you adjust it.
 - **Liveness you can trust.** A clock that only advances while frames are actually arriving,
   and a red badge the moment they stop. A frozen picture never looks like a calm one.
 - **Low latency, pinch to zoom, several cameras.**
@@ -26,6 +29,16 @@ No account, no cloud, no analytics. The app talks to your camera and to nothing 
 
 > **Flashing light.** The alarms flash the whole screen red. If anyone who may see the screen
 > is sensitive to flashing light, switch the alarms off (tap their labels in the drop-down).
+
+## Install
+
+**[Download ACam.apk](https://github.com/infestdead/acam/releases/latest/download/ACam.apk)**
+on the phone and open it. Android will ask once for permission to install apps from your
+browser or file manager; allow it and tap *Install*. Updates are installed the same way, over
+the top, and keep your cameras and settings.
+
+The APK is signed with this certificate (SHA-256), should you want to check it:
+`96e216581f880683c9fb2a184344accc891e014e960d0462064605f6c91714a4`
 
 ## What you need
 
@@ -76,7 +89,8 @@ the white dot marks the default.
 ./gradlew assembleDebug        # needs JDK 17 or newer and the Android SDK
 ```
 
-The APK lands in `app/build/outputs/apk/debug/`. For a signed release build, put
+The APK lands in `app/build/outputs/apk/debug/`. Debug builds install as a separate app
+("ACam debug"), next to a released one. For a signed release build, put
 `ACAM_STORE_FILE`, `ACAM_STORE_PASSWORD`, `ACAM_KEY_ALIAS` and `ACAM_KEY_PASSWORD` in
 `~/.gradle/gradle.properties` and run `./gradlew assembleRelease`.
 

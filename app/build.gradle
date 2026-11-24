@@ -10,8 +10,8 @@ android {
         applicationId 'io.github.infestdead.acam'
         minSdk 24
         targetSdk 36
-        versionCode 1
-        versionName '0.1.0'
+        versionCode 2
+        versionName '0.1.1'
     }
     // The release key lives outside the repository: put ACAM_STORE_FILE, ACAM_STORE_PASSWORD,
     // ACAM_KEY_ALIAS and ACAM_KEY_PASSWORD in ~/.gradle/gradle.properties. Without them the release
@@ -27,7 +27,13 @@ android {
         }
     }
     buildTypes {
+        // Debug builds get their own app id and name, so one can sit next to the released app.
+        debug {
+            applicationIdSuffix '.debug'
+            manifestPlaceholders = [appLabel: 'ACam debug']
+        }
         release {
+            manifestPlaceholders = [appLabel: 'ACam']
             minifyEnabled false
             if (project.hasProperty('ACAM_STORE_FILE')) signingConfig signingConfigs.release
         }
