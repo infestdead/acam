@@ -1,0 +1,44 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'io.github.infestdead.acam'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'io.github.infestdead.acam'
+        minSdk 24
+        targetSdk 36
+        versionCode 1
+        versionName '0.1.0'
+    }
+    // The release key lives outside the repository: put ACAM_STORE_FILE, ACAM_STORE_PASSWORD,
+    // ACAM_KEY_ALIAS and ACAM_KEY_PASSWORD in ~/.gradle/gradle.properties. Without them the release
+    // build is left unsigned.
+    signingConfigs {
+        release {
+            if (project.hasProperty('ACAM_STORE_FILE')) {
+                storeFile file(project.property('ACAM_STORE_FILE'))
+                storePassword project.property('ACAM_STORE_PASSWORD')
+                keyAlias project.property('ACAM_KEY_ALIAS')
+                keyPassword project.property('ACAM_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (project.hasProperty('ACAM_STORE_FILE')) signingConfig signingConfigs.release
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.media3:media3-exoplayer:1.11.1'
+    implementation 'androidx.media3:media3-exoplayer-rtsp:1.11.1'
+}

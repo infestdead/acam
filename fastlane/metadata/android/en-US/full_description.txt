@@ -1,0 +1,15 @@
+A live viewer for your own RTSP camera, built for watching a sleeping baby.
+
+<b>Movement highlight</b> — pixels that are slowly changing are tinted, so the rise and fall of a sleeping child's chest shows up even when it is too small to notice in the picture.
+
+<b>Sound line</b> — a scrolling line of the sound level, measured against the room's own background noise. Works with the speaker muted.
+
+<b>Visual alarms</b> — the screen pulses red when sound or movement passes a level you set. Each alarm has its own switch and sensitivity.
+
+<b>Liveness</b> — a clock that only advances while frames are actually arriving, and a red badge the moment they stop.
+
+Low latency, pinch to zoom, several cameras. No account, no cloud, no analytics: the app talks to your camera and to nothing else.
+
+Needs a camera or recorder with an RTSP stream (rtsp:// or rtsps://), H.264 or H.265 video; sound is tested with AAC audio. Encrypted streams use trust on first use for the camera's certificate.
+
+ACam is not a safety or medical device. It does not measure breathing and must not be relied on to detect that a child is unwell or in danger. The alarms flash the whole screen; switch them off if anyone who may see it is sensitive to flashing light.

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 7: no adaptive icons yet, so the same picture on a plain square. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/ic_launcher_bg" />
+    <item android:drawable="@drawable/ic_launcher_fg" />
+</layer-list>
