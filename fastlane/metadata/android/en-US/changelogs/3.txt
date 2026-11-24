@@ -1,0 +1,1 @@
+Switching to a camera that is slow or unable to connect no longer leaves the previous camera's picture on screen.

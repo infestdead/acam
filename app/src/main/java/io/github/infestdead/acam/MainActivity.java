@@ -42,6 +42,7 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private ExoPlayer player;
     private TextureView video;
+    private boolean pictureStale; // still showing the previous camera's last frame; kept hidden
     private TextView status;
     private ScaleGestureDetector scaleDetector;
 
@@ -496,6 +497,13 @@ public class MainActivity extends Activity {
                     fitVideo();
                 }
             }
+            @Override public void onRenderedFirstFrame() {
+                if (pictureStale) {
+                    pictureStale = false;
+                    video.setAlpha(1f);
+                    motion.reset();
+                }
+            }
             @Override public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_READY) status.setVisibility(View.GONE);
             }
@@ -711,7 +719,7 @@ public class MainActivity extends Activity {
         // The part of the picture that is on screen, as fractions of the whole frame.
         View root = (View) stage.getParent();
         float sw = stage.getWidth(), sh = stage.getHeight();
-        if (sw <= 0 || sh <= 0) return;
+        if (sw <= 0 || sh <= 0 || pictureStale) return;
         float l = clamp(sw / 2f + (-root.getWidth() / 2f - panX) / zoom, 0f, sw) / sw;
         float r = clamp(sw / 2f + (root.getWidth() / 2f - panX) / zoom, 0f, sw) / sw;
         float t = clamp(sh / 2f + (-root.getHeight() / 2f - panY) / zoom, 0f, sh) / sh;
@@ -853,6 +861,10 @@ public class MainActivity extends Activity {
 
     private void camerasChanged() {
         saveCams();
+        // The last picture belongs to the camera that was showing before; it must not stand in for
+        // this one while it connects (or fails to).
+        pictureStale = true;
+        video.setAlpha(0f);
         zoom = 1f;
         panX = panY = 0f;
         applyTransform();
