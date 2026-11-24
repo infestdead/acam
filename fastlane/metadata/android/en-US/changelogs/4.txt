@@ -1,0 +1,2 @@
+The LIVE badge is top right in both orientations; upright, the buttons sit on the row below it.
+Sensitivity sliders are marked with plain minus and plus signs.

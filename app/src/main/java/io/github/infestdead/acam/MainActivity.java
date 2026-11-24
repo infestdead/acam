@@ -42,6 +42,10 @@ public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private ExoPlayer player;
     private TextureView video;
+    private FrameLayout.LayoutParams pickerLp;
+    private boolean tall; // upright: the badge has the top row to itself
+    private int cutTop, cutLeft, cutRight; // camera cut-out
+    private final java.util.List<android.graphics.Rect> cutouts = new java.util.ArrayList<>();
     private boolean pictureStale; // still showing the previous camera's last frame; kept hidden
     private TextView status;
     private ScaleGestureDetector scaleDetector;
@@ -229,7 +233,7 @@ public class MainActivity extends Activity {
         });
         picker.addView(tuneButton);
         setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC);
-        FrameLayout.LayoutParams pickerLp = new FrameLayout.LayoutParams(
+        pickerLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.TOP | Gravity.START);
         pickerLp.setMargins((int) (16 * dp), (int) (16 * dp), 0, 0);
@@ -311,21 +315,23 @@ public class MainActivity extends Activity {
         updatePicker();
 
         root.setOnApplyWindowInsetsListener((v, insets) -> {
-            int top = (int) (16 * dp), right = (int) (16 * dp), left = (int) (16 * dp);
+            cutTop = cutLeft = cutRight = 0;
+            cutouts.clear();
             if (android.os.Build.VERSION.SDK_INT >= 28 && insets.getDisplayCutout() != null) {
-                top += insets.getDisplayCutout().getSafeInsetTop();
-                right += insets.getDisplayCutout().getSafeInsetRight();
-                left += insets.getDisplayCutout().getSafeInsetLeft();
+                cutTop = insets.getDisplayCutout().getSafeInsetTop();
+                cutRight = insets.getDisplayCutout().getSafeInsetRight();
+                cutLeft = insets.getDisplayCutout().getSafeInsetLeft();
+                cutouts.addAll(insets.getDisplayCutout().getBoundingRects());
             }
-            pickerLp.setMargins(left, top, 0, 0);
-            controls.setLayoutParams(pickerLp);
-            badgeLp.setMargins(0, top, right, 0);
-            if (badge.getParent() != controls) badge.setLayoutParams(badgeLp);
+            placeBadge();
             return insets;
         });
         updateBadge();
         badge.addOnLayoutChangeListener((v, l, t, r, bt, ol, ot, or, ob) -> {
-            if (l != ol || r != or) v.post(this::sizeTuner); // the badge grew, shrank or moved
+            if (l != ol || r != or || bt - t != ob - ot) v.post(() -> { // it grew, shrank or moved
+                placeBadge();
+                sizeTuner();
+            });
         });
 
         setContentView(root);
@@ -333,9 +339,9 @@ public class MainActivity extends Activity {
         root.addOnLayoutChangeListener((v, l, t, r, bt, ol, ot, or, ob) -> {
             if (r - l != or - ol || bt - t != ob - ot) {
                 fitVideo();
-                boolean tall = bt - t > r - l;
+                tall = bt - t > r - l;
                 v.post(() -> { // not while a layout pass is running
-                    placeBadge(tall);
+                    placeBadge();
                     sizeTuner();
                 });
             }
@@ -527,33 +533,44 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * Upright there is no room for the badge beside the buttons, so it goes under them (and under
-     * the drop-down while that is open); on its side the screen is wide and it sits top right.
+     * The badge is always top right. On its side the screen is wide and the buttons sit beside it;
+     * upright there is no room for that, so the buttons (and the drop-down) go on the row below.
      */
-    private void placeBadge(boolean below) {
+    private void placeBadge() {
         float dp = getResources().getDisplayMetrics().density;
-        ViewGroup want = below ? controls : (ViewGroup) controls.getParent();
-        if (badge.getParent() == want) return;
-        ((ViewGroup) badge.getParent()).removeView(badge);
-        if (below) {
-            android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.setMargins(0, (int) (8 * dp), 0, 0);
-            controls.addView(badge, lp);
-        } else {
-            want.addView(badge, want.indexOfChild(controls), badgeLp); // under the buttons, as before
+        // Under a camera cut-out the row is already well clear of the edge; no full margin on top.
+        int top = cutTop + (int) ((tall && cutTop > 0 ? 4 : 16) * dp);
+        int side = (int) (16 * dp);
+        int height = badge.getHeight() > 0 ? badge.getHeight() : (int) (32 * dp);
+        int controlsTop = tall ? top + height + (int) (8 * dp) : top;
+        if (tall && cutTop > 0 && badge.getWidth() > 0 && height <= cutTop) {
+            // A small camera hole leaves the strip beside it free: the badge fits there, right at
+            // the top, and the buttons get the first row under the strip.
+            int width = ((View) controls.getParent()).getWidth();
+            android.graphics.Rect spot = new android.graphics.Rect(
+                    width - side - badge.getWidth() - (int) (8 * dp), 0, width, cutTop);
+            boolean free = true;
+            for (android.graphics.Rect c : cutouts) free &= !android.graphics.Rect.intersects(c, spot);
+            if (free) {
+                top = Math.max((int) (8 * dp), (cutTop - height) / 2);
+                controlsTop = cutTop + (int) (4 * dp);
+            }
+        }
+        if (badgeLp.topMargin != top || badgeLp.rightMargin != cutRight + side) {
+            badgeLp.setMargins(0, top, cutRight + side, 0);
+            badge.setLayoutParams(badgeLp);
+        }
+        if (pickerLp.topMargin != controlsTop || pickerLp.leftMargin != cutLeft + side) {
+            pickerLp.setMargins(cutLeft + side, controlsTop, 0, 0);
+            controls.setLayoutParams(pickerLp);
         }
     }
 
-    /**
-     * The drop-down is as wide as there is room: on its side up to the badge at the top right,
-     * upright the whole screen.
-     */
     private void sizeTuner() {
         View root = (View) controls.getParent();
         if (root == null || root.getWidth() == 0) return;
         float dp = getResources().getDisplayMetrics().density;
-        int end = badge.getParent() == controls ? root.getWidth() - (int) (16 * dp) : badge.getLeft() - (int) (8 * dp);
+        int end = tall ? root.getWidth() - (int) (16 * dp) : badge.getLeft() - (int) (8 * dp);
         int width = Math.max((int) (300 * dp), end - controls.getLeft());
         ViewGroup.LayoutParams lp = tuner.getLayoutParams();
         if (lp.width != width) {
