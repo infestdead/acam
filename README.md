@@ -14,9 +14,9 @@ picture really live?*
   happens". Works with the speaker muted.
 - **Movement line.** A second line on the same graph shows how much of the picture is
   moving, so you can see a stir build up and set the alarm level against it.
-- **Visual alarms.** The screen pulses red when sound or movement passes a level you set.
-  Each alarm has its own switch and its own sensitivity, and its limit is drawn on the graph
-  while you adjust it.
+- **Visual alarms.** The edges of the screen pulse red when sound or movement passes a level
+  you set, and an icon shows which alarm went off. Each alarm has its own switch and its own
+  sensitivity, and its limit is drawn on the graph while you adjust it.
 - **Liveness you can trust.** A clock that only advances while frames are actually arriving,
   and a red badge the moment they stop. A frozen picture never looks like a calm one.
 - **Low latency, pinch to zoom, several cameras.**
@@ -27,8 +27,9 @@ No account, no cloud, no analytics. The app talks to your camera and to nothing 
 > relied on to detect that a child is unwell or in danger. The movement highlight is a
 > visualisation; it can miss things and it can show things that are not there.
 
-> **Flashing light.** The alarms flash the whole screen red. If anyone who may see the screen
-> is sensitive to flashing light, switch the alarms off (tap their labels in the drop-down).
+> **Flashing light.** The alarms pulse a red glow around the edge of the screen. If anyone who
+> may see the screen is sensitive to flashing light, switch the alarms off (tap their labels in
+> the drop-down).
 
 ## Install
 

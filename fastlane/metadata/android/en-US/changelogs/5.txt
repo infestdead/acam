@@ -1,0 +1,2 @@
+Alarms now pulse a red glow along the screen edges instead of flashing the whole screen, with an icon pill showing whether sound or movement triggered.
+The movement highlight outlines moving patches instead of washing over them, and the movement graph line thickens and turns deep blue as movement peaks.

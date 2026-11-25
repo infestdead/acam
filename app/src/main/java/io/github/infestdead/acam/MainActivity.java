@@ -92,7 +92,7 @@ public class MainActivity extends Activity {
             }
             // Slices are stamped with the moment they are heard, so the flash lands with the sound.
             long up = android.os.SystemClock.uptimeMillis();
-            if (soundOn && levels.peakBetween(soundCheckedAt, up) >= soundLimit()) flashAlarm();
+            if (soundOn && levels.peakBetween(soundCheckedAt, up) >= soundLimit()) flashAlarm(true);
             soundCheckedAt = up;
             handler.postDelayed(this, MotionView.INTERVAL_MS);
         }
@@ -115,9 +115,16 @@ public class MainActivity extends Activity {
     private int motionAlarm = DEFAULT_MOTION_ALARM;
     private boolean audioLoaded;          // whether the running stream was started with its audio track
     private long soundCheckedAt;
-    private View flash;                   // red sheet over everything, pulsed by an alarm
+    private View flash;                   // red glow round the edge of the screen, pulsed by an alarm
     private android.animation.ObjectAnimator flashAnim;
     private long flashQuietUntil;
+    // What set the alarm off, shown under the buttons: each icon stays for one flash and the pause
+    // after it, so it holds steady while its alarm keeps triggering and goes once that stops.
+    private static final long ALARM_ICON_MS = 3 * 400 + FLASH_PAUSE_MS + 300;
+    private android.widget.LinearLayout alarmIcons;
+    private android.widget.ImageView soundIcon, motionIcon;
+    private long soundAlarmAt = -ALARM_ICON_MS, motionAlarmAt = -ALARM_ICON_MS;
+    private final Runnable alarmIconsTick = this::updateAlarmIcons;
     private final java.util.concurrent.atomic.AtomicLong frames = new java.util.concurrent.atomic.AtomicLong();
     private final java.util.concurrent.atomic.AtomicLong liveMs = new java.util.concurrent.atomic.AtomicLong(); // time the picture has been moving
     private volatile long lastFrameAt;                // elapsedRealtime of the last rendered frame, 0 = none yet
@@ -294,16 +301,35 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         tunerLp.setMargins(0, (int) (8 * dp), 0, 0);
         controls.addView(tuner, tunerLp);
+        alarmIcons = new android.widget.LinearLayout(this);
+        alarmIcons.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        alarmIcons.setPadding((int) (10 * dp), (int) (5 * dp), (int) (10 * dp), (int) (5 * dp));
+        android.graphics.drawable.GradientDrawable abg = new android.graphics.drawable.GradientDrawable();
+        abg.setColor(0xEED32F2F);
+        abg.setCornerRadius(100 * dp);
+        alarmIcons.setBackground(abg);
+        soundIcon = new android.widget.ImageView(this);
+        soundIcon.setImageResource(R.drawable.ic_volume_on);
+        motionIcon = new android.widget.ImageView(this);
+        motionIcon.setImageResource(R.drawable.ic_motion);
+        int iconSize = (int) (28 * dp);
+        alarmIcons.addView(soundIcon, new android.widget.LinearLayout.LayoutParams(iconSize, iconSize));
+        alarmIcons.addView(motionIcon, new android.widget.LinearLayout.LayoutParams(iconSize, iconSize));
+        alarmIcons.setVisibility(View.GONE);
+        android.widget.LinearLayout.LayoutParams alp = new android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        alp.setMargins(0, (int) (8 * dp), 0, 0);
+        controls.addView(alarmIcons, alp);
         root.addView(controls, pickerLp);
         wave = new WaveView(this, levels, moves);
         root.addView(wave, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, (int) (72 * dp), Gravity.BOTTOM));
-        flash = new View(this); // not clickable: touches fall through to the controls and the video
-        flash.setBackgroundColor(0xFFFF0000);
+        // Not clickable: touches fall through to the controls and the video.
+        flash = new EdgeGlow(this, 32 * dp);
         flash.setAlpha(0f);
         root.addView(flash, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        flashAnim = android.animation.ObjectAnimator.ofFloat(flash, "alpha", 0f, 0.5f, 0f);
+        flashAnim = android.animation.ObjectAnimator.ofFloat(flash, "alpha", 0f, 0.9f, 0f);
         flashAnim.setDuration(400);
         flashAnim.setRepeatCount(2); // three pulses
         flashAnim.addListener(new android.animation.AnimatorListenerAdapter() {
@@ -398,6 +424,8 @@ public class MainActivity extends Activity {
         handler.removeCallbacks(restart);
         handler.removeCallbacks(tick);
         handler.removeCallbacks(peek);
+        handler.removeCallbacks(alarmIconsTick);
+        alarmIcons.setVisibility(View.GONE); // nothing will take it down while stopped
         flashAnim.cancel();
         releasePlayer();
     }
@@ -656,9 +684,30 @@ public class MainActivity extends Activity {
         return clamp((float) Math.log10(Math.max(percent, 0.05f) / 0.05f) / 3f, 0f, 1f);
     }
 
-    private void flashAlarm() {
-        if (flashAnim.isRunning() || android.os.SystemClock.elapsedRealtime() < flashQuietUntil) return;
+    private void flashAlarm(boolean sound) {
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (sound) soundAlarmAt = now;
+        else motionAlarmAt = now;
+        updateAlarmIcons();
+        if (flashAnim.isRunning() || now < flashQuietUntil) return;
         flashAnim.start();
+    }
+
+    private void updateAlarmIcons() {
+        long now = android.os.SystemClock.elapsedRealtime();
+        boolean sound = now - soundAlarmAt < ALARM_ICON_MS, moved = now - motionAlarmAt < ALARM_ICON_MS;
+        soundIcon.setVisibility(sound ? View.VISIBLE : View.GONE);
+        motionIcon.setVisibility(moved ? View.VISIBLE : View.GONE);
+        android.widget.LinearLayout.LayoutParams mlp =
+                (android.widget.LinearLayout.LayoutParams) motionIcon.getLayoutParams();
+        int gap = sound && moved ? (int) (6 * getResources().getDisplayMetrics().density) : 0;
+        if (mlp.leftMargin != gap) {
+            mlp.leftMargin = gap;
+            motionIcon.setLayoutParams(mlp);
+        }
+        alarmIcons.setVisibility(sound || moved ? View.VISIBLE : View.GONE);
+        handler.removeCallbacks(alarmIconsTick);
+        if (sound || moved) handler.postDelayed(alarmIconsTick, 200);
     }
 
     /**
@@ -744,7 +793,7 @@ public class MainActivity extends Activity {
         motion.analyse(video, videoAspect, zoom, l, t, r, b);
         float moving = motion.moving();
         if (moving >= 0f) moves.push(moveLevel(moving), android.os.SystemClock.uptimeMillis());
-        if (motionOn && moving >= motionLimit()) flashAlarm();
+        if (motionOn && moving >= motionLimit()) flashAlarm(false);
     }
 
     private void togglePeaking() {
@@ -1343,15 +1392,30 @@ public class MainActivity extends Activity {
             float threshold = Math.max(MIN_THRESHOLD, sensitivity * (bin + 0.5f) / 50f);
             float strongAt = Math.max(STRONG, STRONG_TIMES * (bin + 0.5f) / 50f);
             int tinted = 0, strong = 0;
-            for (int i = 0; i < n; i++) {
-                if (act[i] > strongAt) strong++;
-                float above = (act[i] - threshold) / threshold; // 0 at the threshold, 1 at twice it
-                if (above <= 0f) {
-                    out[i] = 0;
-                } else {
-                    // A wash, not a cover: 16% at the threshold up to 43%, so the picture stays readable.
-                    out[i] = ((40 + (int) (Math.min(1f, above) * 70f)) << 24) | TINT;
+            for (int y = 0, i = 0; y < h; y++) {
+                for (int x = 0; x < w; x++, i++) {
+                    float a = act[i];
+                    if (a > strongAt) strong++;
+                    if (a <= threshold) {
+                        out[i] = 0;
+                        continue;
+                    }
                     tinted++;
+                    float lf = x > 0 ? act[i - 1] : a, rt = x < w - 1 ? act[i + 1] : a;
+                    float up = y > 0 ? act[i - w] : a, dn = y < h - 1 ? act[i + w] : a;
+                    float lo = Math.min(Math.min(lf, rt), Math.min(up, dn));
+                    int alpha;
+                    if (lo <= threshold) {
+                        // The rim of a moving patch is drawn as an outline: 27% where the movement
+                        // only just clears the threshold (noise) up to 86% where it rises steeply.
+                        float hi = Math.max(Math.max(lf, rt), Math.max(up, dn));
+                        alpha = 70 + (int) (Math.min(1f, (hi - lo) / threshold) * 150f);
+                    } else {
+                        // Inside it only a faint wash, 2% up to 10% at twice the threshold, so what
+                        // is moving stays visible through the tint.
+                        alpha = 6 + (int) (Math.min(1f, (a - threshold) / threshold) * 20f);
+                    }
+                    out[i] = (alpha << 24) | TINT;
                 }
             }
             moving = seen < SETTLE ? -1f : 100f * strong / n;
@@ -1370,6 +1434,44 @@ public class MainActivity extends Activity {
             dst.set(where.left * getWidth(), where.top * getHeight(),
                     where.right * getWidth(), where.bottom * getHeight());
             canvas.drawBitmap(overlay, null, dst, paint);
+        }
+    }
+
+    /** The alarm's flash: a red glow along the four edges of the screen, fading towards the picture. */
+    private static final class EdgeGlow extends View {
+        private static final int[] COLORS = {0xFFFF0000, 0xB0FF0000, 0x00FF0000};
+        private static final float[] STOPS = {0f, 0.3f, 1f};
+        private final float band;
+        private final android.graphics.Paint[] sides = new android.graphics.Paint[4];
+
+        EdgeGlow(android.content.Context ctx, float band) {
+            super(ctx);
+            this.band = band;
+        }
+
+        private static android.graphics.Paint fade(float x0, float y0, float x1, float y1) {
+            android.graphics.Paint p = new android.graphics.Paint();
+            p.setShader(new android.graphics.LinearGradient(x0, y0, x1, y1, COLORS, STOPS,
+                    android.graphics.Shader.TileMode.CLAMP));
+            return p;
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldW, int oldH) {
+            sides[0] = fade(0, 0, 0, band);
+            sides[1] = fade(0, h, 0, h - band);
+            sides[2] = fade(0, 0, band, 0);
+            sides[3] = fade(w, 0, w - band, 0);
+        }
+
+        @Override
+        protected void onDraw(android.graphics.Canvas canvas) {
+            if (sides[0] == null) return;
+            int w = getWidth(), h = getHeight();
+            canvas.drawRect(0, 0, w, band, sides[0]);
+            canvas.drawRect(0, h - band, w, h, sides[1]);
+            canvas.drawRect(0, 0, band, h, sides[2]);
+            canvas.drawRect(w - band, 0, w, h, sides[3]);
         }
     }
 
@@ -1505,7 +1607,7 @@ public class MainActivity extends Activity {
         private static final float WARM = 0.45f, HOT = 0.75f;    // level where the line turns yellow / red
         private static final int QUIET = 0xFF4CD964, MID = 0xFFFFCC00, LOUD = 0xFFFF3B30;
 
-        private static final int MOVE = 0xFF00E5FF;               // the movement line: cyan, like the highlight
+        private static final int MOVE = 0xFF00E5FF, MOVE_MID = 0xFF00B0FF, MOVE_HIGH = 0xFF2962FF;
         private static final long MOVE_GAP_MS = 500;              // longer without a reading: leave a hole
         private final AudioLevels levels;
         private final Trace moves;
@@ -1576,12 +1678,14 @@ public class MainActivity extends Activity {
                         float x1 = w - (now - moveAt[i]) * pxPerMs, x0 = w - (now - moveAt[i + 1]) * pxPerMs;
                         if (x1 < 0) break;
                         float y1 = base - moveLevel[i] * span, y0 = base - moveLevel[i + 1] * span;
+                        float v = Math.max(moveLevel[i], moveLevel[i + 1]);
+                        float width = (1.5f + 2f * hotness(v)) * dp;
                         if (pass == 0) {
-                            shade.setStrokeWidth(3f * dp);
+                            shade.setStrokeWidth(width + 1.5f * dp);
                             canvas.drawLine(x0, y0, x1, y1, shade);
                         } else {
-                            line.setColor(MOVE);
-                            line.setStrokeWidth(1.5f * dp);
+                            line.setColor(rampColor(v, MOVE, MOVE_MID, MOVE_HIGH, 0.5f));
+                            line.setStrokeWidth(width);
                             canvas.drawLine(x0, y0, x1, y1, line);
                         }
                     }
@@ -1597,12 +1701,12 @@ public class MainActivity extends Activity {
                     float y1 = base - level[i] * span, y0 = base - level[i + 1] * span;
                     float v = Math.max(level[i], level[i + 1]);
                     // Hairline while quiet, growing as it turns red, so a spike catches the eye.
-                    float width = (1f + 2f * clamp((v - WARM) / (HOT - WARM), 0f, 1f)) * dp;
+                    float width = (1f + 2f * hotness(v)) * dp;
                     if (pass == 0) {
                         shade.setStrokeWidth(width + 1.5f * dp);
                         canvas.drawLine(x0, y0, x1, y1, shade);
                     } else {
-                        line.setColor(color(v));
+                        line.setColor(rampColor(v, QUIET, MID, LOUD, 0.35f));
                         line.setStrokeWidth(width);
                         canvas.drawLine(x0, y0, x1, y1, line);
                     }
@@ -1611,10 +1715,14 @@ public class MainActivity extends Activity {
             postInvalidateOnAnimation(); // keep scrolling; stops by itself while hidden
         }
 
-        private static int color(float v) {
-            if (v <= WARM) return mix(QUIET, MID, v / WARM * 0.35f);
-            if (v >= HOT) return LOUD;
-            return mix(mix(QUIET, MID, 0.35f), LOUD, (v - WARM) / (HOT - WARM));
+        private static float hotness(float v) {
+            return clamp((v - WARM) / (HOT - WARM), 0f, 1f);
+        }
+
+        private static int rampColor(float v, int lo, int mid, int hi, float midWeight) {
+            if (v <= WARM) return mix(lo, mid, v / WARM * midWeight);
+            if (v >= HOT) return hi;
+            return mix(mix(lo, mid, midWeight), hi, (v - WARM) / (HOT - WARM));
         }
 
         private static int mix(int a, int b, float t) {

@@ -14,4 +14,4 @@ Low latency, pinch to zoom, several cameras. No account, no cloud, no analytics:
 
 Needs a camera or recorder with an RTSP stream (rtsp:// or rtsps://), H.264 or H.265 video; sound is tested with AAC audio. Encrypted streams use trust on first use for the camera's certificate.
 
-ACam is not a safety or medical device. It does not measure breathing and must not be relied on to detect that a child is unwell or in danger. The alarms flash the whole screen; switch them off if anyone who may see it is sensitive to flashing light.
+ACam is not a safety or medical device. It does not measure breathing and must not be relied on to detect that a child is unwell or in danger. The alarms pulse a red glow around the edge of the screen; switch them off if anyone who may see it is sensitive to flashing light.
