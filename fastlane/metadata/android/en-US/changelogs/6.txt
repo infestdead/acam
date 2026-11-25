@@ -1,0 +1,1 @@
+When an alarm goes off, its icon now appears just under the LIVE badge in the top right, in both orientations.

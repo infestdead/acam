@@ -122,6 +122,7 @@ public class MainActivity extends Activity {
     // after it, so it holds steady while its alarm keeps triggering and goes once that stops.
     private static final long ALARM_ICON_MS = 3 * 400 + FLASH_PAUSE_MS + 300;
     private android.widget.LinearLayout alarmIcons;
+    private FrameLayout.LayoutParams alarmLp;
     private android.widget.ImageView soundIcon, motionIcon;
     private long soundAlarmAt = -ALARM_ICON_MS, motionAlarmAt = -ALARM_ICON_MS;
     private final Runnable alarmIconsTick = this::updateAlarmIcons;
@@ -316,10 +317,6 @@ public class MainActivity extends Activity {
         alarmIcons.addView(soundIcon, new android.widget.LinearLayout.LayoutParams(iconSize, iconSize));
         alarmIcons.addView(motionIcon, new android.widget.LinearLayout.LayoutParams(iconSize, iconSize));
         alarmIcons.setVisibility(View.GONE);
-        android.widget.LinearLayout.LayoutParams alp = new android.widget.LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        alp.setMargins(0, (int) (8 * dp), 0, 0);
-        controls.addView(alarmIcons, alp);
         root.addView(controls, pickerLp);
         wave = new WaveView(this, levels, moves);
         root.addView(wave, new FrameLayout.LayoutParams(
@@ -329,6 +326,13 @@ public class MainActivity extends Activity {
         flash.setAlpha(0f);
         root.addView(flash, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        // The alarm pill sits right under the LIVE badge, top right in either orientation; added
+        // last so neither the buttons nor the glow cover it.
+        alarmLp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.END);
+        alarmLp.setMargins(0, (int) (56 * dp), (int) (16 * dp), 0);
+        root.addView(alarmIcons, alarmLp);
         flashAnim = android.animation.ObjectAnimator.ofFloat(flash, "alpha", 0f, 0.9f, 0f);
         flashAnim.setDuration(400);
         flashAnim.setRepeatCount(2); // three pulses
@@ -591,6 +595,12 @@ public class MainActivity extends Activity {
         if (pickerLp.topMargin != controlsTop || pickerLp.leftMargin != cutLeft + side) {
             pickerLp.setMargins(cutLeft + side, controlsTop, 0, 0);
             controls.setLayoutParams(pickerLp);
+        }
+        // Alarm pill: just under the badge, its right edge lined up with the badge's.
+        int aTop = top + height + (int) (8 * dp), aRight = cutRight + side;
+        if (alarmLp.topMargin != aTop || alarmLp.rightMargin != aRight) {
+            alarmLp.setMargins(0, aTop, aRight, 0);
+            alarmIcons.setLayoutParams(alarmLp);
         }
     }
 
