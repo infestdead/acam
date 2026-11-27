@@ -1,4 +1,4 @@
-A live viewer for your own RTSP camera, built for watching a sleeping baby.
+A live viewer for your own RTSP camera, or a spare phone used as one, built for watching a sleeping baby.
 
 <b>Movement highlight</b> — pixels that are slowly changing are tinted, so the rise and fall of a sleeping child's chest shows up even when it is too small to notice in the picture.
 
@@ -10,8 +10,10 @@ A live viewer for your own RTSP camera, built for watching a sleeping baby.
 
 <b>Liveness</b> — a clock that only advances while frames are actually arriving, and a red badge the moment they stop.
 
+<b>A spare phone as the camera</b> — for travelling: camera mode turns a second Android phone into the camera, found on the same Wi-Fi or reached over a VPN. From the watching phone you can switch between its back and selfie camera and turn on its torch, or use its screen as a light.
+
 Low latency, pinch to zoom, several cameras. No account, no cloud, no analytics: the app talks to your camera and to nothing else.
 
-Needs a camera or recorder with an RTSP stream (rtsp:// or rtsps://), H.264 or H.265 video; sound is tested with AAC audio. Encrypted streams use trust on first use for the camera's certificate.
+Needs a camera or recorder with an RTSP stream (rtsp:// or rtsps://), or a second phone in camera mode; H.264 or H.265 video; sound is tested with AAC audio. Encrypted streams use trust on first use for the camera's certificate.
 
 ACam is not a safety or medical device. It does not measure breathing and must not be relied on to detect that a child is unwell or in danger. The alarms pulse a red glow around the edge of the screen; switch them off if anyone who may see it is sensitive to flashing light.

@@ -62,6 +62,7 @@ public class MainActivity extends Activity {
     // Liveness badge: frames are counted as they are rendered, so a paused/stalled stream shows up.
     private static final long STALE_MS = 1500;       // no frame for this long -> "NOT LIVE"
     private static final long GIVE_UP_MS = 10_000;   // no frame for this long -> reconnect
+    private static final long PHONE_GIVE_UP_MS = 3_000; // the same for a phone in camera mode
     private android.widget.LinearLayout badge;        // pill holding the text and the frame odometer
     private TextView badgeText;
     private Odometer odometer;
@@ -126,6 +127,24 @@ public class MainActivity extends Activity {
     private android.widget.ImageView soundIcon, motionIcon;
     private long soundAlarmAt = -ALARM_ICON_MS, motionAlarmAt = -ALARM_ICON_MS;
     private final Runnable alarmIconsTick = this::updateAlarmIcons;
+    // Remote control of a phone in camera mode: only offered once the camera has said it is one.
+    private android.widget.ImageView phoneButton;
+    private android.widget.LinearLayout phonePanel;
+    private boolean phoneOpen;
+    private Cam phoneCam;                                   // the camera phoneState belongs to
+    private java.util.Map<String, String> phoneState;
+    private TextView backChip, frontChip, lightChip, lightReadout, phoneNote;
+    private android.widget.SeekBar lightBar;
+    private boolean lightDragging;                          // the poll must not move the slider under a finger
+    private android.widget.LinearLayout lensRow;
+    private int lastTorch, lastScreen = 5;                  // strength to come back to when switched on again
+    private final java.util.concurrent.ExecutorService control = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private final Runnable phonePoll = new Runnable() {
+        @Override public void run() {
+            if (phoneOpen && started) askPhone(cams.isEmpty() ? null : cams.get(camera));
+            handler.postDelayed(this, 3000);
+        }
+    };
     private final java.util.concurrent.atomic.AtomicLong frames = new java.util.concurrent.atomic.AtomicLong();
     private final java.util.concurrent.atomic.AtomicLong liveMs = new java.util.concurrent.atomic.AtomicLong(); // time the picture has been moving
     private volatile long lastFrameAt;                // elapsedRealtime of the last rendered frame, 0 = none yet
@@ -237,9 +256,25 @@ public class MainActivity extends Activity {
         tuneButton.setPadding((int) (12 * dp), (int) (5 * dp), (int) (12 * dp), (int) (5 * dp));
         tuneButton.setOnClickListener(v -> {
             tunerOpen = !tunerOpen;
+            if (tunerOpen) phoneOpen = false;
             updatePicker();
         });
         picker.addView(tuneButton);
+        phoneButton = new android.widget.ImageView(this);
+        phoneButton.setImageResource(R.drawable.ic_light);
+        phoneButton.setPadding((int) (12 * dp), (int) (5 * dp), (int) (12 * dp), (int) (5 * dp));
+        phoneButton.setOnClickListener(v -> {
+            phoneOpen = !phoneOpen;
+            if (phoneOpen) {
+                tunerOpen = false;
+                askPhone(cams.isEmpty() ? null : cams.get(camera));
+            }
+            updatePicker();
+        });
+        android.widget.LinearLayout.LayoutParams hlp = new android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        hlp.setMargins((int) (6 * dp), 0, 0, 0);
+        picker.addView(phoneButton, hlp);
         setVolumeControlStream(android.media.AudioManager.STREAM_MUSIC);
         pickerLp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -302,6 +337,11 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         tunerLp.setMargins(0, (int) (8 * dp), 0, 0);
         controls.addView(tuner, tunerLp);
+        buildPhonePanel();
+        android.widget.LinearLayout.LayoutParams phoneLp = new android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        phoneLp.setMargins(0, (int) (8 * dp), 0, 0);
+        controls.addView(phonePanel, phoneLp);
         alarmIcons = new android.widget.LinearLayout(this);
         alarmIcons.setOrientation(android.widget.LinearLayout.HORIZONTAL);
         alarmIcons.setPadding((int) (10 * dp), (int) (5 * dp), (int) (10 * dp), (int) (5 * dp));
@@ -365,6 +405,9 @@ public class MainActivity extends Activity {
         });
 
         setContentView(root);
+        controls.addOnLayoutChangeListener((v, l, t, r, bt, ol, ot, or, ob) -> {
+            if (bt - t != ob - ot || r - l != or - ol) v.post(this::placeBadge); // a drop-down opened, a button came
+        });
         if (cams.isEmpty()) root.post(() -> editCamera(-1)); // first run: straight to the form
         root.addOnLayoutChangeListener((v, l, t, r, bt, ol, ot, or, ob) -> {
             if (r - l != or - ol || bt - t != ob - ot) {
@@ -418,6 +461,7 @@ public class MainActivity extends Activity {
         soundCheckedAt = android.os.SystemClock.uptimeMillis();
         handler.post(tick);
         handler.post(peek);
+        handler.post(phonePoll);
         if (surfaceReady) startStream();
     }
 
@@ -428,6 +472,7 @@ public class MainActivity extends Activity {
         handler.removeCallbacks(restart);
         handler.removeCallbacks(tick);
         handler.removeCallbacks(peek);
+        handler.removeCallbacks(phonePoll);
         handler.removeCallbacks(alarmIconsTick);
         alarmIcons.setVisibility(View.GONE); // nothing will take it down while stopped
         flashAnim.cancel();
@@ -543,7 +588,10 @@ public class MainActivity extends Activity {
                 }
             }
             @Override public void onPlaybackStateChanged(int state) {
-                if (state == Player.STATE_READY) status.setVisibility(View.GONE);
+                if (state == Player.STATE_READY) {
+                    status.setVisibility(View.GONE);
+                    if (phoneCam != cam) askPhone(cam); // is it a phone that can be steered?
+                }
             }
             @Override public void onPlayerError(PlaybackException error) {
                 for (Throwable t = error; t != null; t = t.getCause()) {
@@ -596,8 +644,13 @@ public class MainActivity extends Activity {
             pickerLp.setMargins(cutLeft + side, controlsTop, 0, 0);
             controls.setLayoutParams(pickerLp);
         }
-        // Alarm pill: just under the badge, its right edge lined up with the badge's.
+        // Alarm pill: just under the badge, its right edge lined up with the badge's. Upright, a phone
+        // camera's light button reaches under the badge: the pill then goes below the buttons and any
+        // open drop-down, so it never hides that button.
         int aTop = top + height + (int) (8 * dp), aRight = cutRight + side;
+        if (tall && phoneButton.getVisibility() == View.VISIBLE) {
+            aTop = controlsTop + (controls.getHeight() > 0 ? controls.getHeight() : (int) (40 * dp)) + (int) (8 * dp);
+        }
         if (alarmLp.topMargin != aTop || alarmLp.rightMargin != aRight) {
             alarmLp.setMargins(0, aTop, aRight, 0);
             alarmIcons.setLayoutParams(alarmLp);
@@ -614,6 +667,11 @@ public class MainActivity extends Activity {
         if (lp.width != width) {
             lp.width = width;
             tuner.setLayoutParams(lp);
+        }
+        ViewGroup.LayoutParams plp = phonePanel.getLayoutParams();
+        if (plp.width != width) {
+            plp.width = width;
+            phonePanel.setLayoutParams(plp);
         }
     }
 
@@ -889,9 +947,19 @@ public class MainActivity extends Activity {
         hint.setTextSize(12);
         hint.setTextColor(0x99FFFFFF);
         hint.setPadding((int) (4 * dp), (int) (6 * dp), (int) (4 * dp), 0);
+        // Phones in camera mode on this network, listed as they are found.
+        android.widget.LinearLayout found = new android.widget.LinearLayout(this);
+        found.setOrientation(android.widget.LinearLayout.VERTICAL);
+        TextView own = new TextView(this);
+        own.setText("Use this phone as a camera instead…");
+        own.setTextSize(14);
+        own.setTextColor(0xFF64B5F6);
+        own.setPadding((int) (4 * dp), (int) (18 * dp), (int) (4 * dp), (int) (6 * dp));
+        if (old == null) form.addView(found);
         form.addView(name);
         form.addView(url);
         form.addView(hint);
+        if (old == null) form.addView(own);
         android.app.AlertDialog.Builder b = new android.app.AlertDialog.Builder(this)
                 .setTitle(old == null ? "Add camera" : "Edit camera")
                 .setView(form)
@@ -932,11 +1000,120 @@ public class MainActivity extends Activity {
                 camerasChanged();
             }
         }));
+        own.setOnClickListener(v -> {
+            dialog.dismiss();
+            startActivity(new android.content.Intent(this, CameraActivity.class));
+        });
+        if (old == null) findPhones(dialog, found, name, url);
         dialog.show();
+    }
+
+    /**
+     * While the add-camera form is open, look for phones in camera mode on the local network and
+     * offer each as a row above the fields. Tapping one asks for its code and fills the form in.
+     */
+    private void findPhones(android.app.AlertDialog dialog, android.widget.LinearLayout rows,
+            android.widget.EditText name, android.widget.EditText url) {
+        float dp = getResources().getDisplayMetrics().density;
+        android.net.nsd.NsdManager nsd = (android.net.nsd.NsdManager) getSystemService(NSD_SERVICE);
+        android.net.nsd.NsdManager.DiscoveryListener listener = new android.net.nsd.NsdManager.DiscoveryListener() {
+            @Override public void onServiceFound(android.net.nsd.NsdServiceInfo info) {
+                handler.post(() -> {
+                    String phone = info.getServiceName();
+                    CameraService mine = CameraService.instance;
+                    if (!dialog.isShowing() || rows.findViewWithTag(phone) != null
+                            || (mine != null && phone.equals(mine.nsdName))) { // this very phone
+                        return;
+                    }
+                    TextView row = new TextView(MainActivity.this);
+                    row.setTag(phone);
+                    row.setText("📱  " + phone + " — a phone in camera mode");
+                    row.setTextSize(15);
+                    row.setTextColor(0xFF64B5F6);
+                    row.setPadding((int) (4 * dp), (int) (10 * dp), (int) (4 * dp), (int) (10 * dp));
+                    row.setOnClickListener(v -> resolvePhone(nsd, info, name, url));
+                    rows.addView(row);
+                });
+            }
+            @Override public void onServiceLost(android.net.nsd.NsdServiceInfo info) {
+                handler.post(() -> {
+                    View row = rows.findViewWithTag(info.getServiceName());
+                    if (row != null) rows.removeView(row);
+                });
+            }
+            @Override public void onDiscoveryStarted(String type) { }
+            @Override public void onDiscoveryStopped(String type) { }
+            @Override public void onStartDiscoveryFailed(String type, int error) { }
+            @Override public void onStopDiscoveryFailed(String type, int error) { }
+        };
+        try {
+            nsd.discoverServices(CameraService.NSD_TYPE, android.net.nsd.NsdManager.PROTOCOL_DNS_SD, listener);
+        } catch (RuntimeException e) {
+            return; // no discovery on this phone; the address can still be typed
+        }
+        dialog.setOnDismissListener(d -> {
+            try {
+                nsd.stopServiceDiscovery(listener);
+            } catch (RuntimeException ignored) { }
+        });
+    }
+
+    @SuppressWarnings("deprecation") // resolveService and getHost are what exists before Android 14
+    private void resolvePhone(android.net.nsd.NsdManager nsd, android.net.nsd.NsdServiceInfo found,
+            android.widget.EditText name, android.widget.EditText url) {
+        nsd.resolveService(found, new android.net.nsd.NsdManager.ResolveListener() {
+            @Override public void onServiceResolved(android.net.nsd.NsdServiceInfo info) {
+                java.net.InetAddress host = info.getHost();
+                if (android.os.Build.VERSION.SDK_INT >= 34) {
+                    for (java.net.InetAddress a : info.getHostAddresses()) {
+                        if (a instanceof java.net.Inet4Address) host = a;
+                    }
+                }
+                if (host == null) return;
+                String address = host.getHostAddress();
+                int scope = address.indexOf('%');
+                if (scope >= 0) address = address.substring(0, scope);
+                final String at = (host instanceof java.net.Inet6Address ? "[" + address + "]" : address) + ":" + info.getPort();
+                handler.post(() -> askCode(info.getServiceName(), at, name, url));
+            }
+            @Override public void onResolveFailed(android.net.nsd.NsdServiceInfo info, int error) {
+                handler.post(() -> android.widget.Toast.makeText(MainActivity.this,
+                        "Could not reach that phone", android.widget.Toast.LENGTH_SHORT).show());
+            }
+        });
+    }
+
+    private void askCode(String phone, String at, android.widget.EditText name, android.widget.EditText url) {
+        if (isFinishing()) return;
+        float dp = getResources().getDisplayMetrics().density;
+        android.widget.EditText code = new android.widget.EditText(this);
+        code.setHint("Code");
+        code.setSingleLine(true);
+        code.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+                | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        code.setImeOptions(android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
+        FrameLayout box = new FrameLayout(this);
+        box.setPadding((int) (22 * dp), (int) (8 * dp), (int) (22 * dp), 0);
+        box.addView(code);
+        new android.app.AlertDialog.Builder(this)
+                .setTitle(phone)
+                .setMessage("Enter the code shown on that phone's camera page.")
+                .setView(box)
+                .setPositiveButton("OK", (d, w) -> {
+                    String c = code.getText().toString().trim().toLowerCase(java.util.Locale.US);
+                    if (c.isEmpty()) return;
+                    if (name.getText().toString().trim().isEmpty()) name.setText(phone);
+                    url.setText("rtsp://" + CameraService.USER + ":" + Uri.encode(c) + "@" + at + "/");
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void camerasChanged() {
         saveCams();
+        phoneCam = null;
+        phoneState = null;
+        phoneOpen = false;
         // The last picture belongs to the camera that was showing before; it must not stand in for
         // this one while it connects (or fails to).
         pictureStale = true;
@@ -1011,7 +1188,222 @@ public class MainActivity extends Activity {
         tbg.setCornerRadius(12 * dp);
         tuneButton.setBackground(tbg);
         tuner.setVisibility(tunerOpen ? View.VISIBLE : View.GONE);
+        boolean phone = phoneState != null && !cams.isEmpty() && phoneCam == cams.get(camera);
+        if (!phone) phoneOpen = false;
+        phoneButton.setVisibility(phone ? View.VISIBLE : View.GONE);
+        cameraChip.setMaxWidth((int) ((phone ? 100 : 150) * dp)); // room for the extra button, upright too
+        boolean lit = phone && !"0".equals(phoneState.get("light"));
+        phoneButton.setColorFilter(phoneOpen || lit ? Color.WHITE : 0xCCFFFFFF);
+        android.graphics.drawable.GradientDrawable hbg = new android.graphics.drawable.GradientDrawable();
+        hbg.setColor(phoneOpen ? 0xCC1E88E5 : lit ? 0xCCF9A825 : 0x99000000); // amber while a light is on
+        hbg.setCornerRadius(12 * dp);
+        phoneButton.setBackground(hbg);
+        phonePanel.setVisibility(phoneOpen ? View.VISIBLE : View.GONE);
+        if (phone) showPhone();
         updateAlarms();
+    }
+
+    private void buildPhonePanel() {
+        float dp = getResources().getDisplayMetrics().density;
+        phonePanel = new android.widget.LinearLayout(this);
+        phonePanel.setOrientation(android.widget.LinearLayout.VERTICAL);
+        phonePanel.setPadding((int) (6 * dp), (int) (6 * dp), (int) (12 * dp), (int) (6 * dp));
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setColor(0x99000000);
+        bg.setCornerRadius(12 * dp);
+        phonePanel.setBackground(bg);
+
+        lensRow = new android.widget.LinearLayout(this);
+        lensRow.setGravity(Gravity.CENTER_VERTICAL);
+        lensRow.addView(panelLabel("Camera"));
+        backChip = panelChip("Back");
+        backChip.setOnClickListener(v -> sendPhone("lens", "back"));
+        frontChip = panelChip("Front");
+        frontChip.setOnClickListener(v -> sendPhone("lens", "front"));
+        lensRow.addView(backChip);
+        lensRow.addView(frontChip);
+        phonePanel.addView(lensRow);
+
+        android.widget.LinearLayout lightRow = new android.widget.LinearLayout(this);
+        lightRow.setGravity(Gravity.CENTER_VERTICAL);
+        lightRow.addView(panelLabel("Light"));
+        lightChip = panelChip("Torch");
+        lightChip.setOnClickListener(v -> {
+            java.util.Map<String, String> st = phoneState;
+            if (st == null) return;
+            boolean screen = "screen".equals(st.get("light-kind"));
+            int max = number(st.get("light-max")), now = number(st.get("light"));
+            int back = screen ? lastScreen : lastTorch;
+            int on = Math.max(1, Math.min(max, back > 0 ? back : (max + 1) / 2));
+            sendPhone("light", String.valueOf(now > 0 ? 0 : on));
+        });
+        lightRow.addView(lightChip);
+        lightBar = new android.widget.SeekBar(this);
+        android.content.res.ColorStateList amber = android.content.res.ColorStateList.valueOf(0xFFFFC107);
+        lightBar.setProgressTintList(amber);
+        lightBar.setThumbTintList(amber);
+        lightBar.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(android.widget.SeekBar bar, int v, boolean fromUser) {
+                if (fromUser) lightReadout.setText((v + 1) + "/" + (bar.getMax() + 1));
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar bar) {
+                lightDragging = true;
+            }
+            @Override public void onStopTrackingTouch(android.widget.SeekBar bar) {
+                lightDragging = false;
+                sendPhone("light", String.valueOf(bar.getProgress() + 1)); // dragging means "on, this strong"
+            }
+        });
+        lightRow.addView(lightBar, new android.widget.LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        lightReadout = new TextView(this);
+        lightReadout.setTextColor(0xFFFFC107);
+        lightReadout.setTextSize(13);
+        lightReadout.setTypeface(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD);
+        lightReadout.setMinWidth((int) (48 * dp));
+        lightReadout.setGravity(Gravity.END);
+        lightRow.addView(lightReadout);
+        phonePanel.addView(lightRow);
+
+        phoneNote = new TextView(this);
+        phoneNote.setTextColor(0x99FFFFFF);
+        phoneNote.setTextSize(12);
+        phoneNote.setPadding((int) (8 * dp), (int) (4 * dp), (int) (8 * dp), (int) (2 * dp));
+        phonePanel.addView(phoneNote);
+        phonePanel.setVisibility(View.GONE);
+    }
+
+    private TextView panelLabel(String text) {
+        float dp = getResources().getDisplayMetrics().density;
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextColor(0xCCFFFFFF);
+        t.setTextSize(12);
+        t.setPadding((int) (8 * dp), (int) (4 * dp), (int) (8 * dp), (int) (4 * dp));
+        t.setLayoutParams(new android.widget.LinearLayout.LayoutParams((int) (64 * dp), ViewGroup.LayoutParams.WRAP_CONTENT));
+        return t;
+    }
+
+    private TextView panelChip(String text) {
+        float dp = getResources().getDisplayMetrics().density;
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextSize(13);
+        t.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        t.setGravity(Gravity.CENTER);
+        t.setMinWidth((int) (64 * dp));
+        t.setPadding((int) (10 * dp), (int) (6 * dp), (int) (10 * dp), (int) (6 * dp));
+        android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(0, (int) (4 * dp), (int) (8 * dp), (int) (4 * dp));
+        t.setLayoutParams(lp);
+        return t;
+    }
+
+    private void styleChip(TextView chip, boolean on, int onColor) {
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setColor(on ? onColor : 0x33FFFFFF);
+        bg.setCornerRadius(10 * getResources().getDisplayMetrics().density);
+        chip.setBackground(bg);
+        chip.setTextColor(on ? Color.WHITE : 0xCCFFFFFF);
+    }
+
+    /** The drop-down as the camera phone last described itself. */
+    private void showPhone() {
+        java.util.Map<String, String> st = phoneState;
+        boolean front = "front".equals(st.get("lens"));
+        String lenses = st.containsKey("lenses") ? st.get("lenses") : "";
+        lensRow.setVisibility(lenses.contains("back") && lenses.contains("front") ? View.VISIBLE : View.GONE);
+        styleChip(backChip, !front, 0xCC1E88E5);
+        styleChip(frontChip, front, 0xCC1E88E5);
+        String kind = st.containsKey("light-kind") ? st.get("light-kind") : "none";
+        int max = number(st.get("light-max")), level = number(st.get("light"));
+        boolean usable = !kind.equals("none") && max > 0;
+        lightChip.setText(kind.equals("screen") ? "Screen" : "Torch");
+        lightChip.setEnabled(usable);
+        lightChip.setAlpha(usable ? 1f : 0.4f);
+        styleChip(lightChip, level > 0, 0xCCF9A825);
+        boolean levels = usable && max > 1;
+        lightBar.setVisibility(levels ? View.VISIBLE : View.INVISIBLE);
+        if (levels && !lightDragging) {
+            lightBar.setMax(max - 1);
+            int shown = level > 0 ? level : kind.equals("screen") ? lastScreen : lastTorch > 0 ? lastTorch : (max + 1) / 2;
+            lightBar.setProgress(Math.max(0, Math.min(max, shown) - 1));
+            lightBar.setAlpha(level > 0 ? 1f : 0.5f);
+        }
+        if (!lightDragging) lightReadout.setText(!usable ? "" : level == 0 ? "Off" : max > 1 ? level + "/" + max : "On");
+        String note;
+        if (kind.equals("none")) note = "This camera has no torch.";
+        else if (kind.equals("screen") && "closed".equals(st.get("screen-page")))
+            note = "To light the screen, leave ACam's camera page open on that phone.";
+        else if (kind.equals("screen")) note = "The selfie camera has no torch; that phone's screen lights the room.";
+        else note = "";
+        phoneNote.setText(note);
+        phoneNote.setVisibility(note.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    private static int number(String s) {
+        try {
+            return s == null ? 0 : Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /** Ask a camera whether it is a phone in camera mode, and if so what it is set to. */
+    private void askPhone(Cam cam) {
+        if (cam == null || !CamControl.mightBePhone(cam.url)) return;
+        String url = cam.url;
+        control.execute(() -> {
+            java.util.Map<String, String> st;
+            try {
+                st = CamControl.get(url);
+            } catch (java.io.IOException e) {
+                return; // not reachable just now; the stream's own badge says so
+            }
+            handler.post(() -> phoneAnswered(cam, st));
+        });
+    }
+
+    private void sendPhone(String name, String value) {
+        if (cams.isEmpty()) return;
+        Cam cam = cams.get(camera);
+        String url = cam.url;
+        if (name.equals("lens") && phoneState != null && value.equals(phoneState.get("lens"))) return;
+        control.execute(() -> {
+            java.util.Map<String, String> st;
+            try {
+                st = CamControl.set(url, name, value);
+            } catch (java.io.IOException e) {
+                handler.post(() -> android.widget.Toast.makeText(this, "Could not reach the camera phone",
+                        android.widget.Toast.LENGTH_SHORT).show());
+                return;
+            }
+            handler.post(() -> {
+                phoneAnswered(cam, st);
+                if (name.equals("lens")) {
+                    // That phone drops the stream and starts the other camera. Reconnect straight
+                    // away rather than wait to notice: the camera answers once its picture is ready.
+                    status.setText("Switching camera\u2026");
+                    status.setVisibility(View.VISIBLE);
+                    handler.removeCallbacks(restart);
+                    handler.postDelayed(restart, 700);
+                }
+            });
+        });
+    }
+
+    private void phoneAnswered(Cam cam, java.util.Map<String, String> st) {
+        if (cams.isEmpty() || cams.get(camera) != cam) return; // switched away meanwhile
+        phoneCam = cam;
+        phoneState = st;
+        if (st != null) {
+            int level = number(st.get("light"));
+            if (level > 0) {
+                if ("screen".equals(st.get("light-kind"))) lastScreen = level;
+                else lastTorch = level;
+            }
+        }
+        updatePicker();
     }
 
     private void updateBadge() {
@@ -1035,7 +1427,11 @@ public class MainActivity extends Activity {
             badgeText.setTextColor(Color.WHITE);
             setBadgeBackground(0xEED32F2F);
             long stalledFor = last != 0 ? now - last : now - streamStartedAt;
-            if (started && player != null && stalledFor > (last != 0 ? GIVE_UP_MS : GIVE_UP_MS + 5000)) {
+            // A phone camera ends the stream on purpose when it is turned or switches lens, and the
+            // player does not notice the connection closing: give up on it sooner.
+            boolean phone = phoneState != null && !cams.isEmpty() && phoneCam == cams.get(camera);
+            long giveUp = phone ? PHONE_GIVE_UP_MS : GIVE_UP_MS;
+            if (started && player != null && stalledFor > (last != 0 ? giveUp : GIVE_UP_MS + 5000)) {
                 handler.post(restart); // hung connection without an error: start over
             }
         }

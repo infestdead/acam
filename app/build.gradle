@@ -10,8 +10,8 @@ android {
         applicationId 'io.github.infestdead.acam'
         minSdk 24
         targetSdk 36
-        versionCode 6
-        versionName '0.1.5'
+        versionCode 7
+        versionName '0.2.0'
     }
     // The release key lives outside the repository: put ACAM_STORE_FILE, ACAM_STORE_PASSWORD,
     // ACAM_KEY_ALIAS and ACAM_KEY_PASSWORD in ~/.gradle/gradle.properties. Without them the release

@@ -1,6 +1,7 @@
 # ACam
 
-A live viewer for your own IP camera, built for watching a sleeping baby.
+A live viewer for your own IP camera, or for a spare phone used as one, built for watching a
+sleeping baby.
 
 Most camera apps show you the picture and stop there. ACam adds what you actually want to
 know at a glance from across the room: *is anything moving, is there any sound, and is this
@@ -20,6 +21,8 @@ picture really live?*
 - **Liveness you can trust.** A clock that only advances while frames are actually arriving,
   and a red badge the moment they stop. A frozen picture never looks like a calm one.
 - **Low latency, pinch to zoom, several cameras.**
+- **A spare phone as the camera.** For travelling: one phone stands in the room, the other
+  watches. See [Camera mode](#camera-mode).
 
 No account, no cloud, no analytics. The app talks to your camera and to nothing else.
 
@@ -46,6 +49,7 @@ The APK is signed with this certificate (SHA-256), should you want to check it:
 - Android 7.0 or newer.
 - A camera or recorder that offers an **RTSP** stream (`rtsp://…` or `rtsps://…`) reachable
   from the phone: UniFi Protect, Reolink, Tapo, Amcrest, Dahua, Hikvision and most others.
+  Or a second Android phone running ACam in camera mode.
 - **H.264 or H.265** video. Sound is tested with **AAC** audio only.
 
 ## Setting up
@@ -59,6 +63,34 @@ The buttons along the top: speaker, sound line, movement highlight, and the slid
 how sensitive the highlight and the two alarms are. On every slider, right is more sensitive;
 the white dot marks the default.
 
+## Camera mode
+
+Any Android phone with ACam can be the camera for another one.
+
+1. On the phone that will be the camera: open ACam's *Add camera* form (it opens by itself on
+   first start; otherwise tap the camera name, then *Add camera*), tap *Use this phone as a
+   camera instead…*, then *Start*. Allow the camera and microphone.
+2. On the phone you watch from: tap *Add camera*. A phone in camera mode on the same Wi-Fi is
+   listed at the top; tap it and enter the code shown on the camera phone. Otherwise type one
+   of the addresses the camera phone shows.
+3. Stand the camera phone where it can see the cot, plugged in. Either way up works; the
+   picture turns with it. Its screen can be switched off.
+
+The camera phone only runs its camera while someone is watching. Both phones need to reach each
+other: the same Wi-Fi, one phone's hotspot, or a VPN such as [Tailscale](https://tailscale.com)
+on both (that works over mobile data, upstairs and downstairs, but every hour of watching uses
+roughly half a gigabyte on each phone). Many hotel and guest Wi-Fi networks keep devices apart;
+use a hotspot or the VPN there.
+
+**From the watching phone**, the light-bulb button (only shown for a phone camera) switches
+between the back and the selfie camera and turns on a light: the torch, with a choice of
+strength where the phone supports it (Android 15 or newer), or with the selfie camera the camera
+phone's own screen. The screen light only works while ACam's camera page is left open on that
+phone; the page keeps the screen on and goes black by itself while no light is wanted.
+
+A phone has no night vision. In a dark room, leave a dim light on, or use the torch or screen
+light at a low setting.
+
 ## Privacy and security
 
 - Camera addresses, which usually contain a password or secret token, are stored only in the
@@ -71,6 +103,10 @@ the white dot marks the default.
   pass the normal public check for their host name are accepted as they are.
 - **Unencrypted streams (`rtsp://`)** send the picture, the sound and the password in the
   clear. Use them only on a network you trust, or over a VPN.
+- **Camera mode** asks for its eight-character code with digest authentication, so the code
+  itself is not sent, and slows down guessing. The picture and sound are not encrypted: use it on
+  a network you trust, or over a VPN. *Make a new code* on the camera page locks out every
+  phone that had the old one.
 - The first connection to an `rtsps://` camera is the one moment trust-on-first-use cannot
   protect: make it on your home network.
 
@@ -83,6 +119,10 @@ the white dot marks the default.
 - Sound has only been tested with AAC. If a camera offers several audio formats, AAC is the
   one requested.
 - Streams are played over RTSP-over-TCP only.
+- Camera mode sends H.264 at 720p, 15 frames a second. Some phones stop long-running camera
+  apps to save battery; if the stream ends by itself, exempt ACam from battery optimisation.
+- The screen light needs the camera page open on the camera phone: Android does not let an app
+  switch the screen on from the background.
 
 ## Building
 
@@ -95,9 +135,11 @@ The APK lands in `app/build/outputs/apk/debug/`. Debug builds install as a separ
 `ACAM_STORE_FILE`, `ACAM_STORE_PASSWORD`, `ACAM_KEY_ALIAS` and `ACAM_KEY_PASSWORD` in
 `~/.gradle/gradle.properties` and run `./gradlew assembleRelease`.
 
-The whole app is one activity in
+The viewer is one activity in
 [`MainActivity.java`](app/src/main/java/io/github/infestdead/acam/MainActivity.java), with no layout XML
-and one dependency ([AndroidX Media3](https://github.com/androidx/media)) for playback.
+and one dependency ([AndroidX Media3](https://github.com/androidx/media)) for playback. Camera mode
+is `CameraActivity` and `CameraService`, with its own small RTSP server (`CamServer`) and capture
+(`CamCapture`) on the platform's camera and encoders, so no further dependencies.
 
 ## Licence
 
